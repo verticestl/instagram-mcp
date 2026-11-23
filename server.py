@@ -842,6 +842,10 @@ if __name__ == "__main__":
     transport = os.environ.get("MCP_TRANSPORT", "stdio")
     if transport == "http":
         port = int(os.environ.get("PORT", 8000))
-        mcp.run(transport="streamable-http", host="0.0.0.0", port=port)
+        # Security: the HTTP endpoint has no login, so it is served only on a long secret path.
+        mcp_path = os.environ.get("MCP_PATH", "")
+        if not mcp_path.startswith("/") or len(mcp_path) < 24:
+            sys.exit("MCP_PATH must be a secret path of 24+ chars, e.g. /mcp-<random-string>")
+        mcp.run(transport="streamable-http", host="0.0.0.0", port=port, path=mcp_path)
     else:
         mcp.run()
