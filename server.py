@@ -198,24 +198,58 @@ def get_account_insights(
         Field(default="day", description="Reporting period"),
     ] = "day",
 ) -> dict:
-    """Get account-level insights (reach, impressions, profile views, follower growth).
+    """Get account-level insights (reach, profile views, engagement, follower growth).
 
     Use 'day' for last 24h, 'week' for 7 days, 'days_28' for monthly trends.
-    Useful for content strategy decisions.
+    Returns totals for the period (reach, profile_views, website_clicks,
+    accounts_engaged, total_interactions) plus follower_change and a daily
+    follower_count_daily series. Useful for content strategy decisions.
     """
-    metrics = "reach,profile_views,follower_count,website_clicks,accounts_engaged,total_interactions"
+    now = int(time.time())
+    days = {"day": 1, "week": 7, "days_28": 28}[period]
+    since = now - days * 86400
+    result: dict = {"period": period}
     with _client() as client:
+        # These metrics only accept metric_type=total_value with period=day;
+        # the time window is set with since/until.
         resp = client.get(
             f"{GRAPH}{BASE}/insights",
-            params={"metric": metrics, "period": period, "access_token": ACCESS_TOKEN},
+            params={
+                "metric": "reach,profile_views,website_clicks,accounts_engaged,total_interactions",
+                "period": "day",
+                "metric_type": "total_value",
+                "since": since,
+                "until": now,
+                "access_token": ACCESS_TOKEN,
+            },
         )
         data = _check(resp, "get_account_insights")
-        result = {}
         for item in data.get("data", []):
-            name = item.get("name")
-            values = item.get("values", [])
-            result[name] = values[-1].get("value") if values else None
-        return result
+            result[item.get("name")] = (item.get("total_value") or {}).get("value")
+
+        # follower_count is only available as a daily time series (last 30 days).
+        try:
+            resp = client.get(
+                f"{GRAPH}{BASE}/insights",
+                params={
+                    "metric": "follower_count",
+                    "period": "day",
+                    "since": since,
+                    "until": now,
+                    "access_token": ACCESS_TOKEN,
+                },
+            )
+            fdata = _check(resp, "get_account_insights (follower_count)")
+            daily = [
+                {"date": (v.get("end_time") or "")[:10], "value": v.get("value")}
+                for item in fdata.get("data", [])
+                for v in item.get("values", [])
+            ]
+            result["follower_count_daily"] = daily
+            result["follower_change"] = sum(d["value"] or 0 for d in daily)
+        except ValueError as e:
+            result["follower_count_error"] = str(e)
+    return result
 
 
 @mcp.tool()
